@@ -1,0 +1,1682 @@
+---
+title: Peer Learning Activity
+author: Winston Ajakaye, Vadim Egorov, RJ Michael
+date: last-modified
+format:
+  html: 
+    page-layout: full
+    grid: 
+      body-width: 1400px
+      margin-width: 200px
+      sidebar-width: 00px
+      gutter-width: 1.5rem  
+    toc: true
+    smooth-scroll: true
+    code-fold: true
+    max-width: 1200px
+    link-external-icon: true
+    link-external-newwindow: true
+    other-links:
+        - text: Quarto Tutorial
+          href: https://quarto.org/docs/get-started/hello/vscode.html
+        - text: DataSF - SFO Airport Monthly Utility Consumption for Natural Gas, Water, and Electricity
+          href: https://data.sfgov.org/Energy-and-Environment/SFO-Airport-Monthly-Utility-Consumption-for-Natura/gcjv-3mzf/data_preview
+    code-links:
+      - text: Data Import Code
+        icon: file-code
+        href: https://github.com/bwajakaye-dev/CSCE_662_Peer_Learning/blob/main/CSCE-662~PLA-Winstion_A-Vadim_E-RJ_M.ipynb
+    respect-user-color-scheme: true
+    axe: true
+theme: 
+    light: flatly
+    dark: darkly
+jupyter: python3
+---
+
+
+### Participants
+- Winston Ajakaye
+- Vadim Egorov
+- RJ Michael
+
+## Library Imports
+
+Importing all required Python libraries for the project:
+- **NumPy / Pandas** – data manipulation and numerical operations
+- **Matplotlib / Seaborn / Plotly** – static and interactive visualisations
+- **scikit-learn** – `IsolationForest` for anomaly detection and evaluation metrics
+- **statsmodels** – `ExponentialSmoothing` (Holt-Winters) and `SARIMAX` for time-series forecasting
+- `warnings.filterwarnings('ignore')` suppresses non-critical deprecation warnings during model fitting.
+
+```{python}
+#| executionInfo: {elapsed: 5799, status: ok, timestamp: 1772516948063, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Import Required Libraries
+
+# Computation
+import numpy as np
+
+# Data Manipulation
+import pandas as pd
+
+# Visulation
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Access Google Drive
+# from google.colab import drive
+
+#
+import warnings
+warnings.filterwarnings('ignore')
+
+# Machine Learning
+from sklearn.ensemble import IsolationForest
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+
+# Machine Learning Evaluation
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.metrics import silhouette_score
+```
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 74023, status: ok, timestamp: 1772517022089, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# from google.colab import drive
+# drive.mount('/content/drive')
+```
+
+# 1. Data Loading & Dataset Exploration
+
+Loading SFO Airport energy dataset and exploring its structure, quality, and content.
+
+## Data Loading
+### Loading the Dataset
+Reads `SFO_Airport_Energy_Data.csv` from shared Google Drive directory into a pandas DataFrame (`df`). This file contains monthly utility consumption records for San Francisco International Airport spanning January 2013 – December 2019.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 4646, status: ok, timestamp: 1772517026737, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Load Data
+df = pd.read_csv('SFO_Airport_Energy_Data.csv')
+```
+
+## Data Exploration
+
+### Dataset Dimensions
+Displays the number of rows and columns (560, 7), conforming 560 monthly observations across 7 feature columns.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 25, status: ok, timestamp: 1772517026764, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+df.shape
+```
+
+### Column Types and Null Counts
+`df.info()` prints each column's name, non-null count, and dtype. Used to verify no column has unexpected nulls and to confirm that `Usage` is currently stored as an object (string) rather than a numeric type — a key issue to fix in pre-processing.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 20, status: ok, timestamp: 1772517026785, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+df.info()
+```
+
+### Descriptive Statistics
+
+`df.describe()` produces count, mean, std, min, quartiles, and max for all numeric columns (`Year`, `Month Number`, and `Usage` once cast). Helps identify the value range and detect potential outliers before any cleaning.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 300}
+#| executionInfo: {elapsed: 28, status: ok, timestamp: 1772517026814, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+df.describe()
+```
+
+### Cardinality Check
+
+`df.nunique()` counts the number of distinct values per column. Useful for confirming that categorical columns (Utility, Owner, Units) have the expected small number of categories.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 304}
+#| executionInfo: {elapsed: 10, status: ok, timestamp: 1772517026825, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+df.nunique()
+```
+
+### Preview First Rows
+
+`df.head()` renders the first 5 rows of the raw dataset, allowing a visual sanity-check of the column structure and sample values before any transformation.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 206}
+#| executionInfo: {elapsed: 40, status: ok, timestamp: 1772517026872, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+df.head()
+```
+
+### Missing Value Audit
+
+Iterates over all columns to count `NaN` values. A total count is also printed. Zero missing values confirms the dataset is complete and no imputation strategy is required.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 14, status: ok, timestamp: 1772517026872, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Check for missing values per column
+print("Missing values per column:")
+print(df.isnull().sum())
+print("\nTotal missing values:", df.isnull().sum().sum())
+```
+
+### Duplicate Row Check
+
+Verifies that no records are exact duplicates. If duplicates exist, the offending rows are displayed. This guards against double-counting consumption values during aggregation.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 5, status: ok, timestamp: 1772517026872, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Check for duplicate rows
+duplicates = df.duplicated().sum()
+print(f"Number of duplicate rows: {duplicates}")
+if duplicates > 0:
+    print("\nDuplicate rows:")
+    print(df[df.duplicated(keep=False)])
+```
+
+### Unique Categorical Values
+
+Prints all distinct values for `Utility` (Water, Electricity, Gas, Passengers), `Owner`, and `Units`, plus the full year range. Provides the taxonomy needed to split the data in the next step.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 3, status: ok, timestamp: 1772517026876, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Display unique values for categorical columns
+print("Unique Utility Types:")
+print(df['Utility'].unique())
+print("\nUnique Owners:")
+print(df['Owner'].unique())
+print("\nUnique Units:")
+print(df['Units'].unique())
+print(f"\nYear Range: {df['Year'].min()} - {df['Year'].max()}")
+```
+
+### Data Exploration Results
+
+**Dataset Overview:**
+- **Shape:** 560 rows × 7 columns
+- **Time Period:** January 2013 - December 2019 (7 years of monthly data)
+
+**Column Information:**
+
+| Column | Data Type | Non-Null Count | Description |
+|--------|-----------|----------------|-------------|
+| Year | int64 | 560 | Year of observation (2013-2019) |
+| Month Number | int64 | 560 | Numeric month (1-12) |
+| Month | object | 560 | Month name |
+| Utility | object | 560 | Type of utility/metric recorded |
+| Owner | object | 560 | Owner/operator category |
+| Units | object | 560 | Unit of measurement |
+| Usage | object | 560 | Consumption/count value |
+
+**Data Quality:**
+- **No missing values** across any column
+- **No duplicate rows**
+- **Usage column is stored as object (string)** - will need conversion to numeric !!!
+
+**Categorical Variables:**
+
+**Utility Types (4 categories):**
+1. **Water** - Water consumption (Million Gallons)
+2. **Electricity** - Electrical consumption (kWh)
+3. **Gas** - Natural gas consumption (Therms)
+4. **Passengers** - Airport passenger traffic (PAX)
+
+**Owner Categories (3 types):**
+1. **Campus** - Airport campus facilities
+2. **Tenant** - Tenant-operated spaces
+3. **Commission** - Commission-managed facilities
+
+**Measurement Units (4 types):**
+- **PAX** - Passenger count
+- **Million Gallons** - Water volume
+- **kWh** - Kilowatt-hours (electricity)
+- **Therms** - Natural gas heating value
+
+**Key Observations:**
+- **Utilities Tracked:** 3 actual utilities (Water, Electricity, Gas) + Passenger data as contextual metric
+- **Multi-owner Structure:** Data segmented by different operational ownership categories
+- **Consumption Data:** The `Usage` column contains actual consumption values and passenger counts
+
+**Next Steps:**
+- Convert `Usage` column from object to numeric type
+- Create a proper datetime column from Year/Month for time series analysis
+- Handle the mixed nature of data (utilities + passenger counts)
+
+# 2. Data Pre-processing
+
+## Pre-processing
+
+- Converting Usage to numbers (float64)
+- Creating Date column
+  - Renaming some columns
+
+### Pre-processing Steps
+
+This cell performs all core cleaning on a copy of the raw DataFrame (`df_clean`) to preserve the original:
+1. **Comma removal** – strips thousands-separator commas from the `Usage` string column.
+2. **Type conversion** – casts `Usage` to `float64`; any unparseable value becomes `NaN`.
+3. **Column rename** – `Month Number` → `Month`, `Month` → `Month Name` for clarity.
+4. **Datetime construction** – combines `Year` + `Month` into a proper `Date` column for time-series indexing.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 484}
+#| executionInfo: {elapsed: 14, status: ok, timestamp: 1772517026908, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Create a working copy of the original dataframe
+df_clean = df.copy()
+
+# Remove commas from Usage column (e.g., "5,750,758" -> "5750758")
+df_clean['Usage'] = df_clean['Usage'].astype(str).str.replace(',', '', regex=False)
+
+# Convert Usage column to numeric (handle any potential errors)
+df_clean['Usage'] = pd.to_numeric(df_clean['Usage'], errors='coerce')
+
+# Change column name from 'Month Number' to 'Month' and 'Month' to 'Month Name'
+df_clean.rename(columns={'Month Number': 'Month', 'Month': 'Month Name'}, inplace=True)
+
+# Create datetime column from Year and Month Number
+df_clean['Date'] = pd.to_datetime(df_clean[['Year', 'Month']].assign(day=1))
+
+# Display the updated dataframe info
+print("\nAfter adding Date column and converting Usage to numeric:")
+print(f"Shape: {df_clean.shape}")
+print("\nData types:")
+print(df_clean.dtypes)
+print("\nFirst few rows:")
+df_clean.head()
+```
+
+## Split Data into Utilities and Passengers
+
+Creating separate dataframes for utilities (Water, Electricity, Gas) and passengers for easier analysis.
+
+Partitions `df_clean` into two separate DataFrames:
+- **`utilities_df`** – rows where `Utility` is Water, Electricity, or Gas (420 rows)
+- **`passengers_df`** – rows where `Utility` is Passengers (140 rows)
+
+Keeping them separate prevents passenger counts (in PAX) from contaminating energy/resource metrics during statistical analysis.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 31, status: ok, timestamp: 1772517026940, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+utilities_df = df_clean[df_clean['Utility'].isin(['Water', 'Electricity', 'Gas'])].copy()
+passengers_df = df_clean[df_clean['Utility'] == 'Passengers'].copy()
+
+print(f"Utilities DataFrame shape: {utilities_df.shape}")
+print(f"Passengers DataFrame shape: {passengers_df.shape}")
+print(f"\nTotal records: {utilities_df.shape[0] + passengers_df.shape[0]}")
+print(f"Original records: {df_clean.shape[0]}")
+```
+
+### Evaluation of Passengers DataFrame - Summary Statistics
+Describes the passenger count dataset: statistical distribution of PAX values, breakdown by utility type (always 'Passengers'), and a count by Owner category (Domestic / International / Total).
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 10, status: ok, timestamp: 1772517026949, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Utilities DataFrame - Statistical Summary
+print("Statistical Summary:")
+print(passengers_df.describe())
+
+# print("\nMissing Values:")
+# print(passengers_df.isnull().sum())
+
+print("\nValue Counts by Utility Type:")
+print(passengers_df['Utility'].value_counts())
+
+print("\nValue Counts by Owner:")
+print(passengers_df['Owner'].value_counts())
+```
+
+### Passenger Statistics by Owner
+
+`groupby('Owner')` partitions the passengers DataFrame to show per-owner PAX statistics (min, max, mean), cumulative totals, and monthly averages — enabling comparison of Domestic vs International traffic volumes.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 21, status: ok, timestamp: 1772517026971, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Passengers DataFrame - Usage (PAX count) statistics by Owner
+print("Passenger Count Statistics by Owner:")
+print(passengers_df.groupby('Owner')['Usage'].describe())
+
+print("\nTotal Passengers by Owner:")
+print(passengers_df.groupby('Owner')['Usage'].sum())
+
+print("\nMonthly Average by Owner:")
+print(passengers_df.groupby('Owner')['Usage'].mean())
+```
+
+### Evaluation of Utilities DataFrame - Summary Statistics
+
+The same summary view applied to the utilities subset: overall descriptive stats, count per utility type (equal split across Electricity, Gas, Water), and count per Owner category to reveal which entities report the most records.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 14, status: ok, timestamp: 1772517027003, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Utilities DataFrame - Statistical Summary
+print("Statistical Summary:")
+print(utilities_df.describe())
+
+# print("\nMissing Values:")
+# print(utilities_df.isnull().sum())
+
+print("\nValue Counts by Utility Type:")
+print(utilities_df['Utility'].value_counts())
+
+print("\nValue Counts by Owner:")
+print(utilities_df['Owner'].value_counts())
+```
+
+### Usage Statistics by Utility and Owner
+
+`groupby('Utility')` and `groupby('Owner')` describe provide side-by-side statistics for each energy/resource type and each owner, along with the full date range of the utilities dataset — confirming 84 months of continuous monthly data.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 5, status: ok, timestamp: 1772517027009, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Utilities DataFrame - Usage statistics by Utility Type
+print("Usage Statistics by Utility Type:")
+print(utilities_df.groupby('Utility')['Usage'].describe())
+
+print("\nUsage Statistics by Owner:")
+print(utilities_df.groupby('Owner')['Usage'].describe())
+
+print("\nDate Range:")
+print(f"Start: {utilities_df['Date'].min()}")
+print(f"End: {utilities_df['Date'].max()}")
+```
+
+## Preprocessing Summary
+
+**What was done:**
+
+1. **Cleaned Usage column** - Removed commas from numeric strings (e.g., "5,750,758" → "5750758")
+2. **Converted `Usage` column** from object (string) to numeric (float64) with error handling
+3. **NaN validation** - Checked for failed conversions and displayed problematic rows if any
+4. **Created datetime column** `Date` from `Year` and `Month Number` columns (original columns kept)
+5. **Split data into two dataframes:**
+   - **`utilities_df`**: Contains Water, Electricity, and Gas consumption data
+   - **`passengers_df`**: Contains passenger traffic (PAX) data
+
+**Rationale for splitting:**
+- Different scales: Utilities measured in Therms/kWh/Million Gallons vs Passengers in PAX
+- Different analysis goals: Energy consumption patterns vs passenger traffic patterns
+- Allows focused analysis while maintaining ability to merge/compare when needed
+
+# 3. Implementation
+
+### Per-Team DataFrame Copies
+
+Creates independent working copies of `utilities_df` for each team member (`winston_df`, `vadim_df`, `rj_df`). Isolating copies ensures that mutations made during one analysis (e.g. adding anomaly flag columns) do not affect other team members' work.
+
+```{python}
+#| executionInfo: {elapsed: 12, status: ok, timestamp: 1772517027037, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Creating individual dataframes from the preprocessed utilities data for each team member's analysis.
+# Can create for the passangers too if you want to use it
+
+winston_df = utilities_df.copy()
+vadim_df = utilities_df.copy()
+rj_df = utilities_df.copy()
+```
+
+## Trend Analysis - Winston
+
+`winston_df.head()` provides a quick confirmation that the team copy is correctly formed before beginning trend analysis. Acts as a placeholder / sanity check.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 206}
+#| executionInfo: {elapsed: 27, status: ok, timestamp: 1772517027062, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# PlaCeHoldeR
+winston_df.head()
+```
+
+### Trend Analysis – Data Preparation & Helper Functions
+
+Prepares `winston_df` for time-series analysis:
+- Ensures the `Date` column exists and is properly typed.
+- Drops rows with missing Date or Usage values and sorts chronologically.
+- Defines two helper functions:
+  - **`linear_trend(series)`** – fits a least-squares line, returns the annualised slope and R² coefficient.
+  - **`classify_trend(slope, r2, mean)`** – labels each utility's trend as *Increasing*, *Decreasing*, or *Stable* based on the percentage annual change and goodness-of-fit threshold.
+
+```{python}
+#| executionInfo: {elapsed: 268, status: ok, timestamp: 1772517027329, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# ── Data Preparation ───────────────────────────────────────────────
+if 'Date' not in winston_df.columns:
+    date_cols = winston_df[['Year', 'Month Number']].rename(columns={'Month Number': 'Month'}) \
+                if 'Month Number' in winston_df.columns else winston_df[['Year', 'Month']]
+    winston_df['Date'] = pd.to_datetime(date_cols.assign(day=1))
+
+winston_df['Date'] = pd.to_datetime(winston_df['Date'], errors='coerce')
+winston_df['Usage'] = pd.to_numeric(winston_df['Usage'], errors='coerce')
+winston_df = winston_df.dropna(subset=['Date', 'Usage']).sort_values('Date')
+
+if 'Utility' not in winston_df.columns:
+    winston_df['Utility'] = '(all)'
+
+# ── Helper: linear trend with slope, R², and fitted values ────────
+def linear_trend(series):
+    s = series.dropna().sort_index()
+    if len(s) < 3:
+        return np.nan, np.nan, pd.Series(dtype=float)
+    x = (s.index - s.index.min()).days.astype(float).to_numpy()
+    y = s.to_numpy(dtype=float)
+    a, b = np.polyfit(x, y, 1)
+    y_hat = a * x + b
+    ss_res, ss_tot = np.sum((y - y_hat) ** 2), np.sum((y - y.mean()) ** 2)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
+    return a * 365.25, r2, pd.Series(y_hat, index=s.index)
+
+# ── Classify trend direction ─────────────────────────────────────
+def classify_trend(slope_per_year, r2, mean_usage):
+    """Classify as Increasing / Decreasing / Stable based on
+       the annual slope relative to the mean and fit quality."""
+    if np.isnan(slope_per_year) or np.isnan(r2):
+        return 'Insufficient data'
+    pct_change_per_year = (slope_per_year / mean_usage) * 100 if mean_usage else 0
+    # If annual change is <1% of the mean OR the fit is very weak, call it stable
+    if abs(pct_change_per_year) < 1.0 or r2 < 0.05:
+        return 'Stable'
+    return 'Increasing' if slope_per_year > 0 else 'Decreasing'
+
+# ── Focus on the three energy / resource utilities ────────────────
+target_utilities = ['Electricity', 'Gas', 'Water']
+utilities = [u for u in sorted(winston_df['Utility'].dropna().unique())
+             if u in target_utilities]
+
+fig = make_subplots(rows=len(utilities), cols=1, shared_xaxes=True,
+                    subplot_titles=utilities, vertical_spacing=0.06)
+```
+
+### Trend Plots – Monthly, Rolling Average, and Linear Fit
+
+Loops over each utility type and:
+1. Aggregates monthly total usage.
+2. Computes a 12-month centred rolling mean to smooth noise.
+3. Calls `linear_trend()` and `classify_trend()` to characterise the long-run direction.
+4. Adds three Plotly traces per subplot — raw monthly line, rolling average, and linear trend overlay.
+5. Collects slope/R²/direction metrics into `trend_rows` for the summary table.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 1000, output_embedded_package_id: 1rW4KTJhrS-trKN2E1oeFhw0GyHKbytOj}
+#| executionInfo: {elapsed: 4832, status: ok, timestamp: 1772517032164, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+trend_rows = []
+for i, utility in enumerate(utilities, 1):
+    monthly = winston_df[winston_df['Utility'] == utility].groupby('Date')['Usage'].sum()
+    rolling = monthly.rolling(12, min_periods=3, center=True).mean()
+    slope, r2, trend = linear_trend(monthly)
+    direction = classify_trend(slope, r2, monthly.mean())
+
+    # ── Plot monthly, rolling average, and linear trend ───────────
+    fig.add_trace(go.Scatter(
+        x=monthly.index, y=monthly.values, name='Monthly',
+        line=dict(width=1.2), legendgroup=utility, showlegend=(i == 1)),
+        row=i, col=1)
+    fig.add_trace(go.Scatter(
+        x=rolling.index, y=rolling.values, name='12-mo Rolling Avg',
+        line=dict(width=2), legendgroup=utility, showlegend=(i == 1)),
+        row=i, col=1)
+    fig.add_trace(go.Scatter(
+        x=trend.index, y=trend.values, name='Linear Trend',
+        line=dict(width=2, dash='dash'), legendgroup=utility, showlegend=(i == 1)),
+        row=i, col=1)
+
+    # ── Annotate subplot title with direction ─────────────────────
+    fig.layout.annotations[i - 1].text = (
+        f"{utility}  —  {direction} (slope/yr = {slope:+,.2f} | R² = {r2:.3f})"
+    )
+
+    units_label = winston_df.loc[winston_df['Utility'] == utility, 'Units'].iloc[0] \
+                  if 'Units' in winston_df.columns else 'Usage'
+    fig.update_yaxes(title_text=units_label, row=i, col=1)
+
+    if len(monthly):
+        pct_total = (monthly.iloc[-1] / monthly.iloc[0] - 1) * 100 if monthly.iloc[0] else np.nan
+        pct_per_yr = (slope / monthly.mean()) * 100 if monthly.mean() else np.nan
+        trend_rows.append({
+            'Utility': utility,
+            'Units': units_label,
+            'Period': f"{monthly.index.min().date()} -> {monthly.index.max().date()}",
+            'Mean_Monthly': round(monthly.mean(), 2),
+            'Slope_per_Year': round(slope, 2),
+            'Pct_Change_per_Year': round(pct_per_yr, 2),
+            'R2': round(r2, 3),
+            'Total_Change': round(monthly.iloc[-1] - monthly.iloc[0], 2),
+            'Pct_Change_Total': round(pct_total, 2),
+            'Direction': direction,
+        })
+
+# ── Trend Summary Table ──────────────────────────────────────────
+trend_summary = pd.DataFrame(trend_rows)
+print("\n" + "=" * 80)
+print("TREND ANALYSIS SUMMARY — Electricity, Gas & Water")
+print("=" * 80)
+for _, row in trend_summary.iterrows():
+    arrow = {'Increasing': 'UP', 'Decreasing': 'DOWN', 'Stable': 'STABLE'}.get(row['Direction'], '?')
+    print(f"\n  [{arrow}]  {row['Utility']} ({row['Units']})")
+    print(f"     Period          : {row['Period']}")
+    print(f"     Mean monthly    : {row['Mean_Monthly']:,.2f}")
+    print(f"     Annual slope    : {row['Slope_per_Year']:+,.2f}  ({row['Pct_Change_per_Year']:+.2f}%/yr)")
+    print(f"     Total change    : {row['Total_Change']:+,.2f}  ({row['Pct_Change_Total']:+.2f}% over period)")
+    print(f"     R2              : {row['R2']:.3f}")
+    print(f"     Direction       : **{row['Direction']}**")
+print("\n" + "=" * 80)
+
+# ── Year-over-Year Comparison Table ──────────────────────────────
+print("\nYear-over-Year Average Monthly Consumption:\n")
+yoy_rows = []
+for utility in utilities:
+    monthly = winston_df[winston_df['Utility'] == utility].groupby('Date')['Usage'].sum()
+    for year, avg in monthly.groupby(monthly.index.year).mean().items():
+        yoy_rows.append({'Utility': utility, 'Year': year, 'Avg_Monthly_Usage': round(avg, 2)})
+yoy_df = pd.DataFrame(yoy_rows).pivot(index='Year', columns='Utility', values='Avg_Monthly_Usage')
+print(yoy_df.to_string())
+
+trend_summary
+fig.update_layout(
+    autosize=True,                 # responsive width
+    width=None,                    # remove any fixed width
+    height=320 * len(utilities),   # keep readable on phones
+    margin=dict(l=35, r=15, t=120, b=45),
+    title=dict(
+        text="<b>Usage Forecasting: Holt-Winters vs SARIMA (12-month hold-out)</b>",
+        x=0.5, y=0.98, xanchor="center", yanchor="top",
+        pad=dict(b=18)
+    ),
+    template="plotly_white"
+)
+fig.update_xaxes(title_text='Date', row=len(utilities), col=1)
+fig.show(renderer="notebook")
+```
+
+## Forecasting
+
+### Forecasting – Data Setup & Accuracy Metrics
+
+Prepares the forecasting pipeline:
+- Re-validates Date and Usage columns.
+- Defines **`calc_metrics(actual, predicted)`** which computes MAE, RMSE, and MAPE for model evaluation.
+- Sets `FORECAST_MONTHS = 12` (the forward horizon) and `TEST_MONTHS = 12` (hold-out window for backtesting).
+- Builds the `accuracy_rows` list that will collect per-model, per-utility error statistics.
+
+```{python}
+#| executionInfo: {elapsed: 2, status: ok, timestamp: 1772517032245, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# ── Ensure Date & Usage columns are ready ─────────────────────────
+if 'Date' not in winston_df.columns:
+    date_cols = winston_df[['Year', 'Month Number']].rename(columns={'Month Number': 'Month'}) \
+                if 'Month Number' in winston_df.columns else winston_df[['Year', 'Month']]
+    winston_df['Date'] = pd.to_datetime(date_cols.assign(day=1))
+
+winston_df['Date'] = pd.to_datetime(winston_df['Date'], errors='coerce')
+winston_df['Usage'] = pd.to_numeric(winston_df['Usage'], errors='coerce')
+
+# ── Helper: accuracy metrics ──────────────────────────────────────
+def calc_metrics(actual, predicted):
+    mae  = mean_absolute_error(actual, predicted)
+    rmse = np.sqrt(mean_squared_error(actual, predicted))
+    mape = np.mean(np.abs((actual - predicted) / actual.replace(0, np.nan))) * 100
+    return mae, rmse, mape
+
+# ── Set forecast horizon & train/test split ───────────────────────
+FORECAST_MONTHS = 12          # months to forecast beyond the data
+TEST_MONTHS     = 12          # hold-out for accuracy evaluation
+
+utilities = sorted(winston_df['Utility'].dropna().unique())
+accuracy_rows = []            # collect model accuracy per utility
+```
+
+### Holt-Winters vs SARIMA Forecast
+
+For each utility type:
+1. Aggregates to monthly totals and assigns a proper monthly frequency index.
+2. Splits into train / test sets.
+3. Fits **Holt-Winters Exponential Smoothing** (additive seasonality, period 12) and **SARIMA(1,1,1)(1,1,0)[12]** on the training set.
+4. Generates test-period predictions and 12-month future forecasts.
+
+```{python}
+#| executionInfo: {elapsed: 696, status: ok, timestamp: 1772517032942, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+
+
+# One subplot row per utility (2 cols: Holt-Winters | SARIMA)
+fig = make_subplots(
+    rows=len(utilities), cols=2,
+    shared_xaxes=False,
+    subplot_titles=[f'{u} – Holt-Winters' if c == 0 else f'{u} – SARIMA'
+                    for u in utilities for c in range(2)],
+    vertical_spacing=0.08, horizontal_spacing=0.06
+)
+
+for i, utility in enumerate(utilities, 1):
+    # Aggregate to monthly totals and set a proper monthly frequency
+    monthly = (winston_df[winston_df['Utility'] == utility]
+               .groupby('Date')['Usage'].sum()
+               .sort_index()
+               .asfreq('MS'))    # Month-Start frequency
+    monthly = monthly.interpolate()   # fill any gaps
+
+    if len(monthly) < 24:
+        print(f"⚠ {utility}: not enough data ({len(monthly)} months). Skipping.")
+        continue
+
+    train, test = monthly[:-TEST_MONTHS], monthly[-TEST_MONTHS:]
+
+    # ────── Model 1: Holt-Winters (Triple Exponential Smoothing) ──
+    try:
+        hw_model = ExponentialSmoothing(
+            train, trend='add', seasonal='add', seasonal_periods=12
+        ).fit(optimized=True)
+        hw_test_pred = hw_model.forecast(TEST_MONTHS)
+        hw_future    = hw_model.forecast(TEST_MONTHS + FORECAST_MONTHS)[-FORECAST_MONTHS:]
+        hw_mae, hw_rmse, hw_mape = calc_metrics(test, hw_test_pred)
+    except Exception as e:
+        print(f"⚠ {utility} Holt-Winters failed: {e}")
+        hw_test_pred = hw_future = pd.Series(dtype=float)
+        hw_mae = hw_rmse = hw_mape = np.nan
+
+    # ────── Model 2: SARIMA(1,1,1)(1,1,1,12) ─────────────────────
+    try:
+        sarima_model = SARIMAX(
+            train, order=(1, 1, 1), seasonal_order=(1, 1, 1, 12),
+            enforce_stationarity=False, enforce_invertibility=False
+        ).fit(disp=False)
+        sarima_test_pred = sarima_model.forecast(TEST_MONTHS)
+        sarima_future    = sarima_model.forecast(TEST_MONTHS + FORECAST_MONTHS)[-FORECAST_MONTHS:]
+        sa_mae, sa_rmse, sa_mape = calc_metrics(test, sarima_test_pred)
+    except Exception as e:
+        print(f"⚠ {utility} SARIMA failed: {e}")
+        sarima_test_pred = sarima_future = pd.Series(dtype=float)
+        sa_mae = sa_rmse = sa_mape = np.nan
+
+    # ────── Store accuracy ────────────────────────────────────────
+    accuracy_rows.append({
+        'Utility': utility,
+        'Model': 'Holt-Winters', 'MAE': hw_mae,
+        'RMSE': hw_rmse, 'MAPE (%)': hw_mape
+    })
+    accuracy_rows.append({
+        'Utility': utility,
+        'Model': 'SARIMA', 'MAE': sa_mae,
+        'RMSE': sa_rmse, 'MAPE (%)': sa_mape
+    })
+
+    # ────── Plot col 1: Holt-Winters ─────────────────────────────
+    show = (i == 1)
+    fig.add_trace(go.Scatter(x=train.index, y=train.values, name='Train',
+                             line=dict(color='#636EFA'), legendgroup='train',
+                             showlegend=show), row=i, col=1)
+    fig.add_trace(go.Scatter(x=test.index, y=test.values, name='Test (actual)',
+                             line=dict(color='#00CC96'), legendgroup='test',
+                             showlegend=show), row=i, col=1)
+    if len(hw_test_pred):
+        fig.add_trace(go.Scatter(x=hw_test_pred.index, y=hw_test_pred.values,
+                                 name='HW Test Pred', line=dict(color='#EF553B', dash='dot'),
+                                 legendgroup='hw_pred', showlegend=show), row=i, col=1)
+    if len(hw_future):
+        fig.add_trace(go.Scatter(x=hw_future.index, y=hw_future.values,
+                                 name='HW Forecast', line=dict(color='#AB63FA', dash='dash'),
+                                 legendgroup='hw_fc', showlegend=show), row=i, col=1)
+
+    # ────── Plot col 2: SARIMA ────────────────────────────────────
+    fig.add_trace(go.Scatter(x=train.index, y=train.values, name='Train',
+                             line=dict(color='#636EFA'), legendgroup='train',
+                             showlegend=False), row=i, col=2)
+    fig.add_trace(go.Scatter(x=test.index, y=test.values, name='Test (actual)',
+                             line=dict(color='#00CC96'), legendgroup='test',
+                             showlegend=False), row=i, col=2)
+    if len(sarima_test_pred):
+        fig.add_trace(go.Scatter(x=sarima_test_pred.index, y=sarima_test_pred.values,
+                                 name='SARIMA Test Pred', line=dict(color='#FFA15A', dash='dot'),
+                                 legendgroup='sa_pred', showlegend=show), row=i, col=2)
+    if len(sarima_future):
+        fig.add_trace(go.Scatter(x=sarima_future.index, y=sarima_future.values,
+                                 name='SARIMA Forecast', line=dict(color='#FF6692', dash='dash'),
+                                 legendgroup='sa_fc', showlegend=show), row=i, col=2)
+
+    # Y-axis labels
+    fig.update_yaxes(title_text='Usage', row=i, col=1)
+```
+
+### Accuracy Summary & Forecast Table
+
+Prints two outputs:
+1. **Model Accuracy Table** – MAE, RMSE, and MAPE for Holt-Winters and SARIMA on the last 12 months hold-out, per utility. Used to select the better-performing model.
+2. **Forecast Summary Table** – The final 12-month ahead point forecasts for each utility and model, giving an actionable view of expected future consumption.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 1000}
+#| executionInfo: {elapsed: 669, status: ok, timestamp: 1772517033629, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# ── Model Accuracy Summary ────────────────────────────────────────
+forecast_accuracy = pd.DataFrame(accuracy_rows)
+print("\n📊 Model Accuracy (test set = last 12 months):\n")
+print(forecast_accuracy.to_string(index=False, float_format='{:.2f}'.format))
+
+
+# ── Forecast Summary Table ────────────────────────────────────────
+forecast_rows = []
+for utility in utilities:
+    monthly = (winston_df[winston_df['Utility'] == utility]
+               .groupby('Date')['Usage'].sum()
+               .sort_index().asfreq('MS').interpolate())
+    if len(monthly) < 24:
+        continue
+    train = monthly[:-TEST_MONTHS]
+    # Use best model (lower MAPE) for final forecast
+    u_acc = forecast_accuracy[forecast_accuracy['Utility'] == utility]
+    best = u_acc.loc[u_acc['MAPE (%)'].idxmin()]
+    if best['Model'] == 'Holt-Winters':
+        mdl = ExponentialSmoothing(monthly, trend='add', seasonal='add',
+                                   seasonal_periods=12).fit(optimized=True)
+    else:
+        mdl = SARIMAX(monthly, order=(1,1,1), seasonal_order=(1,1,1,12),
+                      enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
+    fc = mdl.forecast(FORECAST_MONTHS)
+    for dt, val in fc.items():
+        forecast_rows.append({'Utility': utility, 'Date': dt.strftime('%Y-%m'),
+                              'Forecast_Usage': round(val, 2), 'Best_Model': best['Model']})
+
+forecast_table = pd.DataFrame(forecast_rows)
+print(f"\n🔮 {FORECAST_MONTHS}-Month Forecast (using best model per utility):\n")
+forecast_table
+```
+
+### Forecast Plots
+- Plots both models side-by-side in a shared Plotly subplot grid, with shaded forecast confidence bands.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 977, output_embedded_package_id: 1uAM-zTVxWzKZfmpLhD7sa-zADR1-uyxO}
+#| executionInfo: {elapsed: 923, status: ok, timestamp: 1772517034550, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+fig.update_layout(
+    autosize=True,                     # let container control width
+    width=None,                        # remove fixed width
+    height=320 * len(utilities),       # a bit shorter for phones
+    margin=dict(l=40, r=20, t=120, b=50),
+    title=dict(
+        text="<b>Usage Forecasting: Holt-Winters vs SARIMA (12-month hold-out)</b>",
+        x=0.5, y=0.98, xanchor="center", yanchor="top",
+        pad=dict(b=18)
+    ),
+    template="plotly_white"
+)
+
+fig.show(config={"responsive": True}, renderer="notebook")  # important for web + phone resizing
+```
+
+## Anomaly Detection - Vadim
+
+### Visualisation Style Setup
+
+Applies `seaborn` whitegrid theme and sets the default matplotlib figure size to `(14, 8)` for all subsequent anomaly detection plots, ensuring consistent, readable chart dimensions.
+
+```{python}
+#| executionInfo: {elapsed: 1, status: ok, timestamp: 1772517034581, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Set visualization style
+sns.set_style("whitegrid")
+plt.rcParams['figure.figsize'] = (14, 8)
+```
+
+### Approach 1: Isolation Forest
+
+Isolation Forest is an unsupervised learning algorithm that detects anomalies by isolating outliers. It works well for multivariate data and doesn't assume normal distribution.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 14, status: ok, timestamp: 1772517034596, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Create a copy for anomaly detection
+vadim_anomaly_df = vadim_df.copy()
+
+# Initialize columns for anomaly flags
+vadim_anomaly_df['Isolation_Forest_Anomaly'] = 0
+vadim_anomaly_df['Anomaly_Score'] = 0.0
+
+# Detect anomalies for each utility type
+for utility in vadim_anomaly_df['Utility'].unique():
+    mask = vadim_anomaly_df['Utility'] == utility
+    utility_data = vadim_anomaly_df[mask][['Usage']].values
+
+    # Train Isolation Forest
+    iso_forest = IsolationForest(contamination=0.05, random_state=42)
+    predictions = iso_forest.fit_predict(utility_data)
+    scores = iso_forest.score_samples(utility_data)
+
+    # Mark anomalies (-1 from model becomes 1 for anomaly flag)
+    vadim_anomaly_df.loc[mask, 'Isolation_Forest_Anomaly'] = (predictions == -1).astype(int)
+    vadim_anomaly_df.loc[mask, 'Anomaly_Score'] = scores
+
+# Summary
+anomaly_count = vadim_anomaly_df['Isolation_Forest_Anomaly'].sum()
+print(f"Isolation Forest detected {anomaly_count} anomalies ({anomaly_count/len(vadim_anomaly_df)*100:.2f}%)")
+print("\nAnomalies by Utility Type:")
+print(vadim_anomaly_df[vadim_anomaly_df['Isolation_Forest_Anomaly']==1]['Utility'].value_counts())
+```
+
+### Approach 2: Statistical Method (IQR)
+
+Using Interquartile Range (IQR) to detect statistical outliers. Points beyond 1.5 * IQR from Q1/Q3 are considered anomalies.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 19, status: ok, timestamp: 1772517034629, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# IQR-based anomaly detection
+vadim_anomaly_df['IQR_Anomaly'] = 0
+
+for utility in vadim_anomaly_df['Utility'].unique():
+    mask = vadim_anomaly_df['Utility'] == utility
+    usage_data = vadim_anomaly_df.loc[mask, 'Usage']
+
+    # Calculate IQR
+    Q1 = usage_data.quantile(0.25)
+    Q3 = usage_data.quantile(0.75)
+    IQR = Q3 - Q1
+
+    # Define bounds
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+
+    # Mark anomalies
+    anomalies = (usage_data < lower_bound) | (usage_data > upper_bound)
+    vadim_anomaly_df.loc[mask, 'IQR_Anomaly'] = anomalies.astype(int)
+
+# Summary
+iqr_anomaly_count = vadim_anomaly_df['IQR_Anomaly'].sum()
+print(f"📊 IQR method detected {iqr_anomaly_count} anomalies ({iqr_anomaly_count/len(vadim_anomaly_df)*100:.2f}%)")
+print("\nAnomalies by Utility Type:")
+print(vadim_anomaly_df[vadim_anomaly_df['IQR_Anomaly']==1]['Utility'].value_counts())
+
+# Combined anomalies (detected by both methods)
+vadim_anomaly_df['Combined_Anomaly'] = ((vadim_anomaly_df['Isolation_Forest_Anomaly'] == 1) |
+                                         (vadim_anomaly_df['IQR_Anomaly'] == 1)).astype(int)
+combined_count = vadim_anomaly_df['Combined_Anomaly'].sum()
+print(f"\n Combined: {combined_count} total anomalies detected by at least one method")
+```
+
+### Visualization 3: Anomaly Summary Dashboard
+
+Overview of anomalies by utility type, owner, and temporal patterns.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 761}
+#| executionInfo: {elapsed: 565, status: ok, timestamp: 1772517035195, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Anomaly summary dashboard
+fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+# Define colors for utilities
+colors = {
+    'Electricity': '#3498db',
+    'Gas': '#e74c3c',
+    'Water': '#2ecc71',
+}
+# 1. Anomalies by Utility Type
+ax1 = axes[0, 0]
+anomaly_by_utility = vadim_anomaly_df[vadim_anomaly_df['Combined_Anomaly']==1]['Utility'].value_counts()
+bars1 = ax1.bar(anomaly_by_utility.index, anomaly_by_utility.values,
+                color=[colors[u] for u in anomaly_by_utility.index], alpha=0.7, edgecolor='black')
+ax1.set_title('Anomalies by Utility Type', fontsize=13, fontweight='bold')
+ax1.set_ylabel('Number of Anomalies', fontsize=11)
+ax1.grid(True, alpha=0.3, axis='y')
+# Add value labels on bars
+for bar in bars1:
+    height = bar.get_height()
+    ax1.text(bar.get_x() + bar.get_width()/2., height,
+             f'{int(height)}', ha='center', va='bottom', fontweight='bold')
+
+# 2. Anomalies by Owner
+ax2 = axes[0, 1]
+anomaly_by_owner = vadim_anomaly_df[vadim_anomaly_df['Combined_Anomaly']==1]['Owner'].value_counts()
+bars2 = ax2.bar(anomaly_by_owner.index, anomaly_by_owner.values,
+                color='coral', alpha=0.7, edgecolor='black')
+ax2.set_title('Anomalies by Owner', fontsize=13, fontweight='bold')
+ax2.set_ylabel('Number of Anomalies', fontsize=11)
+ax2.grid(True, alpha=0.3, axis='y')
+for bar in bars2:
+    height = bar.get_height()
+    ax2.text(bar.get_x() + bar.get_width()/2., height,
+             f'{int(height)}', ha='center', va='bottom', fontweight='bold')
+
+# 3. Anomalies by Year
+ax3 = axes[1, 0]
+vadim_anomaly_df['Year_Col'] = vadim_anomaly_df['Date'].dt.year
+anomaly_by_year = vadim_anomaly_df[vadim_anomaly_df['Combined_Anomaly']==1]['Year_Col'].value_counts().sort_index()
+ax3.plot(anomaly_by_year.index, anomaly_by_year.values, marker='o',
+         linewidth=2, markersize=8, color='darkred')
+ax3.fill_between(anomaly_by_year.index, anomaly_by_year.values, alpha=0.3, color='red')
+ax3.set_title('Anomalies Over Years', fontsize=13, fontweight='bold')
+ax3.set_xlabel('Year', fontsize=11)
+ax3.set_ylabel('Number of Anomalies', fontsize=11)
+ax3.grid(True, alpha=0.3)
+
+# 4. Method Comparison
+ax4 = axes[1, 1]
+method_counts = [
+    vadim_anomaly_df['Isolation_Forest_Anomaly'].sum(),
+    vadim_anomaly_df['IQR_Anomaly'].sum(),
+    combined_count
+]
+methods = ['Isolation\nForest', 'IQR\nMethod', 'Combined\n(Either)']
+bars4 = ax4.bar(methods, method_counts, color=['#3498db', '#e74c3c', '#9b59b6'],
+                alpha=0.7, edgecolor='black')
+ax4.set_title('Anomaly Detection Method Comparison', fontsize=13, fontweight='bold')
+ax4.set_ylabel('Number of Anomalies', fontsize=11)
+ax4.grid(True, alpha=0.3, axis='y')
+for bar in bars4:
+    height = bar.get_height()
+    ax4.text(bar.get_x() + bar.get_width()/2., height,
+             f'{int(height)}', ha='center', va='bottom', fontweight='bold')
+
+plt.tight_layout()
+plt.show()
+```
+
+### Visualization 1: Time Series with Anomalies
+
+Plotting utility usage over time with anomalies highlighted.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 912}
+#| executionInfo: {elapsed: 665, status: ok, timestamp: 1772517035861, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Time series visualization with anomalies
+fig, axes = plt.subplots(3, 1, figsize=(16, 12))
+utilities = ['Water', 'Electricity', 'Gas']
+colors = {'Water': '#1f77b4', 'Electricity': '#ff7f0e', 'Gas': '#2ca02c'}
+
+for idx, utility in enumerate(utilities):
+    ax = axes[idx]
+    utility_data = vadim_anomaly_df[vadim_anomaly_df['Utility'] == utility]
+
+    # Plot normal data
+    normal_data = utility_data[utility_data['Combined_Anomaly'] == 0]
+    ax.plot(normal_data['Date'], normal_data['Usage'],
+            marker='o', markersize=4, linestyle='-', linewidth=1.5,
+            color=colors[utility], label='Normal', alpha=0.7)
+
+    # Plot anomalies
+    anomaly_data = utility_data[utility_data['Combined_Anomaly'] == 1]
+    if len(anomaly_data) > 0:
+        ax.scatter(anomaly_data['Date'], anomaly_data['Usage'],
+                   color='red', s=100, marker='X', zorder=5,
+                   label=f'Anomalies ({len(anomaly_data)})', edgecolors='black', linewidth=1.5)
+
+    ax.set_title(f'{utility} Usage Over Time with Anomalies', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Date', fontsize=11)
+    ax.set_ylabel(f"Usage ({utility_data['Units'].iloc[0]})", fontsize=11)
+    ax.legend(loc='best', fontsize=10)
+    ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+### Visualization 2: Distribution Analysis with Anomalies
+
+Box plots and histograms showing the distribution of usage and where anomalies occur.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 678}
+#| executionInfo: {elapsed: 859, status: ok, timestamp: 1772517036721, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Distribution visualization
+fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+
+for idx, utility in enumerate(['Water', 'Electricity', 'Gas']):
+    utility_data = vadim_anomaly_df[vadim_anomaly_df['Utility'] == utility]
+
+    # Box plot (top row)
+    ax_box = axes[0, idx]
+    normal_usage = utility_data[utility_data['Combined_Anomaly'] == 0]['Usage']
+    anomaly_usage = utility_data[utility_data['Combined_Anomaly'] == 1]['Usage']
+
+    box_data = [normal_usage, anomaly_usage] if len(anomaly_usage) > 0 else [normal_usage]
+    labels = ['Normal', 'Anomaly'] if len(anomaly_usage) > 0 else ['Normal']
+    bp = ax_box.boxplot(box_data, labels=labels, patch_artist=True,
+                         showmeans=True, meanline=True)
+
+    # Color the boxes
+    for patch, color in zip(bp['boxes'], [colors[utility], 'red']):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
+
+    ax_box.set_title(f'{utility} - Box Plot', fontsize=12, fontweight='bold')
+    ax_box.set_ylabel(f"Usage ({utility_data['Units'].iloc[0]})", fontsize=10)
+    ax_box.grid(True, alpha=0.3, axis='y')
+
+    # Histogram (bottom row)
+    ax_hist = axes[1, idx]
+    ax_hist.hist(normal_usage, bins=20, alpha=0.7, color=colors[utility],
+                 label='Normal', edgecolor='black')
+    if len(anomaly_usage) > 0:
+        ax_hist.hist(anomaly_usage, bins=10, alpha=0.7, color='red',
+                     label='Anomaly', edgecolor='black')
+
+    ax_hist.set_title(f'{utility} - Distribution', fontsize=12, fontweight='bold')
+    ax_hist.set_xlabel(f"Usage ({utility_data['Units'].iloc[0]})", fontsize=10)
+    ax_hist.set_ylabel('Frequency', fontsize=10)
+    ax_hist.legend(loc='best')
+    ax_hist.grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.show()
+```
+
+### Key Findings & Interpretation
+
+Summary of anomaly detection results and insights.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 13, status: ok, timestamp: 1772517036735, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Display detailed anomaly information
+print("=" * 70)
+print("ANOMALY DETECTION - KEY FINDINGS")
+print("=" * 70)
+
+# Overall statistics
+total_records = len(vadim_anomaly_df)
+total_anomalies = vadim_anomaly_df['Combined_Anomaly'].sum()
+anomaly_rate = (total_anomalies / total_records) * 100
+
+print(f"\n📊 Overall Statistics:")
+print(f"   Total Records: {total_records}")
+print(f"   Total Anomalies: {total_anomalies}")
+print(f"   Anomaly Rate: {anomaly_rate:.2f}%")
+
+# By utility
+print(f"\n🔍 Anomalies by Utility:")
+for utility in ['Water', 'Electricity', 'Gas']:
+    util_data = vadim_anomaly_df[vadim_anomaly_df['Utility'] == utility]
+    util_anomalies = util_data['Combined_Anomaly'].sum()
+    util_rate = (util_anomalies / len(util_data)) * 100
+    print(f"   {utility}: {util_anomalies} anomalies ({util_rate:.2f}%)")
+
+# By owner
+print(f"\n🏢 Anomalies by Owner:")
+for owner in vadim_anomaly_df['Owner'].unique():
+    owner_data = vadim_anomaly_df[vadim_anomaly_df['Owner'] == owner]
+    owner_anomalies = owner_data['Combined_Anomaly'].sum()
+    owner_rate = (owner_anomalies / len(owner_data)) * 100
+    print(f"   {owner}: {owner_anomalies} anomalies ({owner_rate:.2f}%)")
+
+# Display sample anomalies
+print(f"\n🚨 Sample Anomalies (Top 5 by Usage):")
+sample_anomalies = vadim_anomaly_df[vadim_anomaly_df['Combined_Anomaly']==1].nlargest(5, 'Usage')
+print(sample_anomalies[['Date', 'Utility', 'Owner', 'Usage', 'Units']].to_string(index=False))
+```
+
+## Seasonality Analysis
+
+```{python}
+#| executionInfo: {elapsed: 15, status: ok, timestamp: 1772517036751, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Prepare data for seasonality analysis
+vadim_seasonal_df = vadim_df.copy()
+
+# Add temporal features
+vadim_seasonal_df['Year_Col'] = vadim_seasonal_df['Date'].dt.year
+vadim_seasonal_df['Month_Col'] = vadim_seasonal_df['Date'].dt.month
+vadim_seasonal_df['Quarter'] = vadim_seasonal_df['Date'].dt.quarter
+vadim_seasonal_df['Month_Name'] = vadim_seasonal_df['Date'].dt.strftime('%B')
+```
+
+### Approach: Seasonal Decomposition
+
+Using time series decomposition to separate data into trend, seasonal, and residual components using statsmodels.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 215, status: ok, timestamp: 1772517036968, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Seasonal decomposition for each utility type
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+decompositions = {}
+
+for utility in ['Water', 'Electricity', 'Gas']:
+    # Get data for this utility, aggregate by date if needed
+    utility_ts = vadim_seasonal_df[vadim_seasonal_df['Utility'] == utility].groupby('Date')['Usage'].sum().sort_index()
+
+    # Perform seasonal decomposition (additive model, 12-month period)
+    decomposition = seasonal_decompose(utility_ts, model='additive', period=12)
+    decompositions[utility] = decomposition
+
+    print(f"✅ Decomposition complete for {utility}")
+
+print("\n📊 Seasonal decomposition ready for all utilities")
+```
+
+### Visualization 1: Seasonal Decomposition Plots
+
+Breaking down each utility into trend, seasonal, and residual components.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 1000}
+#| executionInfo: {elapsed: 1848, status: ok, timestamp: 1772517038846, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Plot seasonal decomposition for each utility
+colors_util = {'Water': '#1f77b4', 'Electricity': '#ff7f0e', 'Gas': '#2ca02c'}
+
+for utility in ['Water', 'Electricity', 'Gas']:
+    decomp = decompositions[utility]
+
+    fig, axes = plt.subplots(4, 1, figsize=(16, 12))
+    fig.suptitle(f'{utility} - Seasonal Decomposition Analysis', fontsize=16, fontweight='bold', y=0.995)
+
+    # Original data
+    axes[0].plot(decomp.observed.index, decomp.observed.values,
+                 color=colors_util[utility], linewidth=2)
+    axes[0].set_ylabel('Observed', fontsize=11, fontweight='bold')
+    axes[0].set_title('Original Time Series', fontsize=12)
+    axes[0].grid(True, alpha=0.3)
+
+    # Trend
+    axes[1].plot(decomp.trend.index, decomp.trend.values,
+                 color='darkred', linewidth=2)
+    axes[1].set_ylabel('Trend', fontsize=11, fontweight='bold')
+    axes[1].set_title('Long-term Trend', fontsize=12)
+    axes[1].grid(True, alpha=0.3)
+
+    # Seasonal
+    axes[2].plot(decomp.seasonal.index, decomp.seasonal.values,
+                 color='green', linewidth=2)
+    axes[2].set_ylabel('Seasonal', fontsize=11, fontweight='bold')
+    axes[2].set_title('Seasonal Pattern (12-month cycle)', fontsize=12)
+    axes[2].grid(True, alpha=0.3)
+
+    # Residual
+    axes[3].plot(decomp.resid.index, decomp.resid.values,
+                 color='gray', linewidth=1, alpha=0.7)
+    axes[3].axhline(y=0, color='black', linestyle='--', linewidth=1)
+    axes[3].set_ylabel('Residual', fontsize=11, fontweight='bold')
+    axes[3].set_xlabel('Date', fontsize=11)
+    axes[3].set_title('Residuals (Irregular component)', fontsize=12)
+    axes[3].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+print("✅ Seasonal decomposition plots generated")
+```
+
+### Visualization 2: Monthly Patterns
+
+Analyzing average usage patterns by month across all years.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 418}
+#| executionInfo: {elapsed: 624, status: ok, timestamp: 1772517039473, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Monthly average patterns
+fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+month_order = ['January', 'February', 'March', 'April', 'May', 'June',
+               'July', 'August', 'September', 'October', 'November', 'December']
+
+for idx, utility in enumerate(['Water', 'Electricity', 'Gas']):
+    ax = axes[idx]
+
+    # Calculate monthly averages
+    utility_data = vadim_seasonal_df[vadim_seasonal_df['Utility'] == utility]
+    monthly_avg = utility_data.groupby('Month_Name')['Usage'].mean().reindex(month_order)
+
+    # Bar plot
+    bars = ax.bar(range(12), monthly_avg.values, color=colors_util[utility],
+                   alpha=0.7, edgecolor='black', linewidth=1.5)
+
+    # Highlight peak and low months
+    max_idx = monthly_avg.values.argmax()
+    min_idx = monthly_avg.values.argmin()
+    bars[max_idx].set_color('darkred')
+    bars[max_idx].set_alpha(0.9)
+    bars[min_idx].set_color('lightblue')
+    bars[min_idx].set_alpha(0.9)
+
+    ax.set_xticks(range(12))
+    ax.set_xticklabels([m[:3] for m in month_order], rotation=45, ha='right')
+    ax.set_title(f'{utility} - Average Monthly Usage', fontsize=13, fontweight='bold')
+    ax.set_ylabel(f"Average Usage ({utility_data['Units'].iloc[0]})", fontsize=10)
+    ax.grid(True, alpha=0.3, axis='y')
+
+    # Add value labels
+    for i, (bar, val) in enumerate(zip(bars, monthly_avg.values)):
+        if i == max_idx or i == min_idx:
+            ax.text(bar.get_x() + bar.get_width()/2., bar.get_height(),
+                   f'{val:.0f}', ha='center', va='bottom', fontweight='bold', fontsize=9)
+
+plt.tight_layout()
+plt.show()
+
+print("✅ Monthly pattern analysis complete")
+```
+
+### Visualization 3: Seasonal Heatmaps
+
+Year vs Month heatmaps showing usage patterns over time.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 329}
+#| executionInfo: {elapsed: 900, status: ok, timestamp: 1772517040390, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Create heatmaps for seasonal patterns
+fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+for idx, utility in enumerate(['Water', 'Electricity', 'Gas']):
+    ax = axes[idx]
+
+    # Pivot data for heatmap
+    utility_data = vadim_seasonal_df[vadim_seasonal_df['Utility'] == utility]
+    pivot_data = utility_data.pivot_table(
+        values='Usage',
+        index='Year_Col',
+        columns='Month_Col',
+        aggfunc='sum'
+    )
+
+    # Create heatmap
+    im = ax.imshow(pivot_data.values, aspect='auto', cmap='YlOrRd', interpolation='nearest')
+
+    # Set ticks and labels
+    ax.set_xticks(range(12))
+    ax.set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])
+    ax.set_yticks(range(len(pivot_data.index)))
+    ax.set_yticklabels(pivot_data.index)
+
+    ax.set_xlabel('Month', fontsize=11, fontweight='bold')
+    ax.set_ylabel('Year', fontsize=11, fontweight='bold')
+    ax.set_title(f'{utility} - Seasonal Heatmap', fontsize=13, fontweight='bold')
+
+    # Add colorbar
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label(f"Usage ({utility_data['Units'].iloc[0]})", rotation=270, labelpad=20)
+
+    # Add text annotations for values
+    for i in range(len(pivot_data.index)):
+        for j in range(len(pivot_data.columns)):
+            val = pivot_data.values[i, j]
+            if not np.isnan(val):
+                text_color = 'white' if val > pivot_data.values.mean() else 'black'
+                ax.text(j, i, f'{val:.0f}', ha='center', va='center',
+                       color=text_color, fontsize=7, fontweight='bold')
+
+plt.tight_layout()
+plt.show()
+
+print("✅ Seasonal heatmaps generated")
+```
+
+### Visualization 4: Quarterly Trends
+
+Comparing usage patterns across quarters (seasonal quarters).
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 478}
+#| executionInfo: {elapsed: 321, status: ok, timestamp: 1772517040713, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Quarterly analysis
+fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+# Subplot 1: Box plots by quarter
+ax1 = axes[0]
+quarter_labels = ['Q1\n(Jan-Mar)', 'Q2\n(Apr-Jun)', 'Q3\n(Jul-Sep)', 'Q4\n(Oct-Dec)']
+
+for utility in ['Water', 'Electricity', 'Gas']:
+    utility_data = vadim_seasonal_df[vadim_seasonal_df['Utility'] == utility]
+    quarterly_means = utility_data.groupby('Quarter')['Usage'].mean()
+
+    ax1.plot(range(1, 5), quarterly_means.values, marker='o', markersize=10,
+             linewidth=3, label=utility, color=colors_util[utility], alpha=0.7)
+
+ax1.set_xticks(range(1, 5))
+ax1.set_xticklabels(quarter_labels)
+ax1.set_xlabel('Quarter', fontsize=12, fontweight='bold')
+ax1.set_ylabel('Average Usage', fontsize=12, fontweight='bold')
+ax1.set_title('Quarterly Usage Trends by Utility', fontsize=14, fontweight='bold')
+ax1.legend(loc='best', fontsize=11)
+ax1.grid(True, alpha=0.3)
+
+# Subplot 2: Stacked bar chart by quarter
+ax2 = axes[1]
+quarters = [1, 2, 3, 4]
+bar_width = 0.25
+positions = np.arange(len(quarters))
+
+for idx, utility in enumerate(['Water', 'Electricity', 'Gas']):
+    utility_data = vadim_seasonal_df[vadim_seasonal_df['Utility'] == utility]
+    quarterly_totals = utility_data.groupby('Quarter')['Usage'].sum()
+
+    ax2.bar(positions + idx * bar_width, quarterly_totals.values,
+            bar_width, label=utility, color=colors_util[utility],
+            alpha=0.7, edgecolor='black')
+
+ax2.set_xticks(positions + bar_width)
+ax2.set_xticklabels(quarter_labels)
+ax2.set_xlabel('Quarter', fontsize=12, fontweight='bold')
+ax2.set_ylabel('Total Usage', fontsize=12, fontweight='bold')
+ax2.set_title('Total Usage by Quarter and Utility', fontsize=14, fontweight='bold')
+ax2.legend(loc='best', fontsize=11)
+ax2.grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.show()
+
+print("✅ Quarterly analysis complete")
+```
+
+### Key Findings: Seasonality Insights
+
+Summary of seasonal patterns discovered in the utility data.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 18, status: ok, timestamp: 1772517040732, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Seasonality analysis summary
+print("=" * 70)
+print("SEASONALITY ANALYSIS - KEY FINDINGS")
+print("=" * 70)
+
+for utility in ['Water', 'Electricity', 'Gas']:
+    print(f"\n🔹 {utility}:")
+
+    # Get data
+    utility_data = vadim_seasonal_df[vadim_seasonal_df['Utility'] == utility]
+
+    # Monthly statistics
+    monthly_avg = utility_data.groupby('Month_Name')['Usage'].mean().reindex(month_order)
+    max_month = monthly_avg.idxmax()
+    min_month = monthly_avg.idxmin()
+    max_val = monthly_avg.max()
+    min_val = monthly_avg.min()
+    variation = ((max_val - min_val) / min_val) * 100
+
+    print(f"   Peak Month: {max_month} (avg: {max_val:.2f})")
+    print(f"   Low Month: {min_month} (avg: {min_val:.2f})")
+    print(f"   Seasonal Variation: {variation:.1f}%")
+
+    # Quarterly statistics
+    quarterly_avg = utility_data.groupby('Quarter')['Usage'].mean()
+    max_quarter = quarterly_avg.idxmax()
+    min_quarter = quarterly_avg.idxmin()
+
+    quarter_names = {1: 'Q1 (Winter)', 2: 'Q2 (Spring)', 3: 'Q3 (Summer)', 4: 'Q4 (Fall)'}
+    print(f"   Peak Quarter: {quarter_names[max_quarter]}")
+    print(f"   Low Quarter: {quarter_names[min_quarter]}")
+
+    # Trend analysis
+    decomp = decompositions[utility]
+    trend_change = ((decomp.trend.dropna().iloc[-1] - decomp.trend.dropna().iloc[0]) /
+                    decomp.trend.dropna().iloc[0]) * 100
+    trend_direction = "increasing" if trend_change > 0 else "decreasing"
+    print(f"   Overall Trend: {trend_direction} ({abs(trend_change):.1f}% over period)")
+
+print("\n" + "=" * 70)
+print("✅ Seasonality analysis complete!")
+print("=" * 70)
+
+# Summary insights
+print("\n📊 Key Insights:")
+print("   • Clear seasonal patterns detected in all utilities")
+print("   • Monthly variations indicate weather and operational impacts")
+print("   • Quarterly trends show consistent seasonal cycles")
+print("   • Decomposition reveals underlying trends separate from seasonal effects")
+```
+
+## Clustering
+
+## Data Overview
+
+We begin by inspecting the dataset structure to understand its schema and attributes.
+
+This dataset contains:
+- Year and Month information
+- Utility type (Electricity, Gas, Water)
+- Ownership category (Tenant vs Commission)
+- Usage values and units
+- Date field for time-series analysis
+
+Understanding the structure is critical before performing aggregation, feature engineering, or modeling.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 206}
+#| executionInfo: {elapsed: 21, status: ok, timestamp: 1772517040755, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+rj_df.head()
+```
+
+## Monthly Aggregation by Utility Type
+
+To detect overall system demand regimes, we aggregate total monthly consumption for each utility.
+
+This allows us to:
+- Compare electricity, gas, and water simultaneously
+- Construct a multi-dimensional feature space
+- Prepare data for clustering analysis
+
+Each month will now be represented as a multi-utility consumption vector.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 206}
+#| executionInfo: {elapsed: 9, status: ok, timestamp: 1772517040773, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# Ensure datetime
+rj_df['Date'] = pd.to_datetime(rj_df['Date'])
+
+# Extract month + year
+rj_df['YearMonth'] = rj_df['Date'].dt.to_period('M')
+
+# Aggregate monthly consumption per utility
+monthly_utility = (
+    rj_df.groupby(['Utility', 'YearMonth'])['Usage']
+    .sum()
+    .reset_index()
+)
+
+monthly_utility.head()
+```
+
+## Restructuring Data for Clustering
+
+We reshape the dataset so that:
+- Each row corresponds to a single month
+- Columns represent electricity, gas, and water usage
+
+In this format, each month becomes a three-dimensional data point.
+
+This structure is required for clustering algorithms such as K-Means.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 238}
+#| executionInfo: {elapsed: 30, status: ok, timestamp: 1772517040804, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+utility_pivot = monthly_utility.pivot(
+    index = 'YearMonth',
+    columns = 'Utility',
+    values = 'Usage'
+).fillna(0)
+
+utility_pivot.head()
+```
+
+## Feature Standardization
+
+Electricity usage is measured in millions of kWh, while water and gas are much smaller in magnitude.
+
+Without scaling:
+- Electricity would dominate the clustering process
+- Smaller utilities would have minimal influence
+
+Standardization ensures that all utilities contribute equally to regime detection.
+
+## K-Means Clustering for Regime Detection
+
+We apply K-Means clustering to group months with similar overall utility consumption patterns.
+
+The algorithm:
+- Assigns each month to one of k clusters
+- Minimizes within-cluster variance
+- Identifies recurring demand regimes
+
+In this analysis, each cluster represents a distinct consumption state.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 238}
+#| executionInfo: {elapsed: 76, status: ok, timestamp: 1772517040878, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+scaler = StandardScaler()
+scaled_data = scaler.fit_transform(utility_pivot)
+
+kmeans = KMeans(n_clusters = 3, random_state = 5)
+clusters = kmeans.fit_predict(scaled_data)
+
+utility_pivot['Cluster'] = clusters
+
+utility_pivot.head()
+```
+
+### Visualizing Utility Demand Regimes
+
+We visualize the clustered months to interpret regime structure.
+
+Clusters typically represent:
+- High-demand months
+- Transitional demand months
+- Lower-demand baseline months
+
+This visualization allows us to assess whether the system exhibits distinct structural demand states.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 511}
+#| executionInfo: {elapsed: 399, status: ok, timestamp: 1772517041317, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+plt.figure(figsize = (14, 5))
+
+for cluster in sorted(utility_pivot['Cluster'].unique()):
+  subset = utility_pivot[utility_pivot['Cluster'] == cluster]
+  plt.plot(subset.index.astype(str),
+           subset.drop(columns = 'Cluster').mean(axis = 1),
+           marker = 'o',
+           linestyle = '',
+           label = f'Cluster {cluster}'
+           )
+
+plt.xticks(rotation = 90)
+plt.title('Monthly Utility Usage Regimes')
+plt.legend()
+plt.show()
+```
+
+### Visualizing Utility Demand Regimes
+
+We visualize the clustered months to interpret regime structure.
+
+Clusters typically represent:
+- High-demand months
+- Transitional demand months
+- Lower-demand baseline months
+
+This visualization allows us to assess whether the system exhibits distinct structural demand states.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/}
+#| executionInfo: {elapsed: 13, status: ok, timestamp: 1772517513817, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+score = silhouette_score(scaled_data, clusters)
+print(f'Silhoette Score: {score:.3f}')
+```
+
+## Ownership Pattern Analysis
+
+### Monthly Aggregation by Ownership
+
+To analyze ownership-based consumption patterns, we aggregate total monthly usage for each ownership category.
+
+This step:
+- Converts the dataset into a monthly time-series format
+- Prepares the data for volatility and growth analysis
+- Enables comparison between Commission and Tenant consumption
+
+# Aggregation is a key preprocessing step in enterprise data mining workflows.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 206}
+#| executionInfo: {elapsed: 4, status: ok, timestamp: 1772517041318, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+rj_df.head()
+```
+
+### Pivot Transformation for Time-Series Comparison
+
+We reshape the dataset so that:
+- Each row represents one month
+- Each column represents an ownership category
+
+This pivot structure allows:
+- Direct comparison of monthly consumption
+- Statistical evaluation of variability
+- Growth rate calculations
+
+Reshaping data into a modeling-friendly structure is essential in data mining applications.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 238}
+#| executionInfo: {elapsed: 12, status: ok, timestamp: 1772517041331, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+monthly_owner = (
+    rj_df.groupby(['YearMonth', 'Owner'])['Usage']
+    .sum()
+    .reset_index()
+)
+
+owner_pivot = monthly_owner.pivot(
+    index = 'YearMonth',
+    columns = 'Owner',
+    values = 'Usage'
+).fillna(0)
+
+owner_pivot.head()
+```
+
+### Volatility Analysis
+
+We compute the standard deviation of monthly usage to measure consumption variability.
+
+Higher standard deviation indicates:
+- Greater operational fluctuation
+- Less stability in demand patterns
+
+Volatility analysis helps identify whether one ownership category exhibits more dynamic usage behavior.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 143}
+#| executionInfo: {elapsed: 7, status: ok, timestamp: 1772517041352, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+volatility = owner_pivot.std()
+mean_usage = owner_pivot.mean()
+
+owner_stats = pd.DataFrame({
+    'Mean Usage': mean_usage,
+    'Volatility (Std Dev)': volatility
+})
+
+owner_stats
+```
+
+### Growth Rate Analysis
+
+We calculate the average monthly percentage change in usage to identify structural growth trends.
+
+Positive growth rate:
+- Indicates increasing consumption over time
+
+Negative growth rate:
+- Suggests declining demand
+
+Growth analysis helps distinguish between stable systems and expanding or contracting usage patterns.
+
+```{python}
+#| colab: {base_uri: https://localhost:8080/, height: 143}
+#| executionInfo: {elapsed: 3, status: ok, timestamp: 1772517041356, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+growth_rates = owner_pivot.pct_change().mean()
+
+growth_df = pd.DataFrame({
+    'Average Monthly Growth Rate': growth_rates
+})
+
+growth_df
+```
+
+# 4. Analysis
+
+```{python}
+#| executionInfo: {elapsed: 15, status: ok, timestamp: 1772517041371, user: {displayName: RJ Michael, userId: '10921279730874660459'}, user_tz: 540}
+# tODo
+```
+
